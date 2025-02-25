@@ -5,42 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shooter Game</title>
     <style>
-      body {
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-        background-color: #222;
-      }
-      canvas {
-        display: block;
-        background: #111;
-        margin: 0 auto;
-      }
-      .game-over,
-      .win-message {
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        font-size: 48px;
-        color: white;
-        font-family: Arial, sans-serif;
-        text-align: center;
-        display: none;
-      }
-      .wave-counter,
-      .cooldown-timer {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        font-size: 20px;
-        color: white;
-        font-family: Arial, sans-serif;
-        user-select: none; /* Prevent text selection */
-      }
-      .cooldown-timer {
-        top: 40px;
-      }
+      body { margin: 0; padding: 0; overflow: hidden; background: black; }
+      canvas { display: block; background: black; margin: 0 auto; }
+      .game-over, .win-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 48px; color: white; font-family: Arial, sans-serif; text-align: center; display: none; }
+      .wave-counter, .cooldown-timer, .weapon-status, .parry-indicator { position: fixed; font-size: 20px; color: white; font-family: Arial, sans-serif; user-select: none; }
+      .wave-counter { top: 10px; left: 10px; }
+      .cooldown-timer { top: 40px; left: 10px; }
+      .weapon-status { top: 70px; left: 10px; }
+      .parry-indicator { top: 100px; left: 10px; color: lime; display: none; }
     </style>
   </head>
   <body>
@@ -49,64 +21,47 @@
     <div class="win-message" id="winMessage">You Win!</div>
     <div class="wave-counter" id="waveCounter">Wave: 1</div>
     <div class="cooldown-timer" id="cooldownTimer">Secondary Attack Ready</div>
+    <div class="weapon-status" id="weaponStatus">Weapon: Pistol</div>
+    <div class="parry-indicator" id="parryIndicator">Parried!</div>
 
     <script>
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
-
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
 
-      const player = {
-        x: canvas.width / 2,
-        y: canvas.height / 2,
-        width: 30,
-        height: 30,
-        speed: 5,
-        color: "blue",
-        maxHealth: 100,
-        health: 100,
-        immune: false,
-      };
+      const player = { x: canvas.width / 2, y: canvas.height / 2, width: 30, height: 30, speed: 5, color: "blue", maxHealth: 100, health: 100, immune: false };
+      let keys = { w: false, a: false, s: false, d: false, f: false };
+      let bullets = [], enemies = [], enemyBullets = [], parriedBullets = [];
+      let wave = 1, enemiesToSpawn = 8, gameOver = false, cursor = { x: 0, y: 0 };
+      let secondaryCooldown = false, cooldownTimer = 0, currentWeapon = "primary";
+      let isShotgunSpecialActive = false, isSpeedBoostActive = false, meleeCooldown = false, isParrying = false;
+      let parryCooldown = false;
 
-      let keys = { w: false, a: false, s: false, d: false };
-      let bullets = [];
-      let enemies = [];
-      let wave = 1;
-      let enemiesToSpawn = 4;
-      let gameOver = false;
-      let cursor = { x: 0, y: 0 };
-      let secondaryCooldown = false;
-      let cooldownTimer = 0;
-      let canShoot = true;
+      const weaponCooldowns = { primary: { canShoot: true, lastShot: 0 }, shotgun: { canShoot: true, lastShot: 0 } };
+      let smoothCursor = { x: canvas.width / 2, y: canvas.height / 2 };
+      const smoothFactor = 0.1;
 
       function handlePlayerMovement() {
-        if (keys.w && player.y > 0) player.y -= player.speed;
-        if (keys.s && player.y < canvas.height - player.height)
-          player.y += player.speed;
-        if (keys.a && player.x > 0) player.x -= player.speed;
-        if (keys.d && player.x < canvas.width - player.width)
-          player.x += player.speed;
+        const speed = isSpeedBoostActive ? player.speed * 2 : player.speed;
+        if (keys.w && player.y > 0) player.y -= speed;
+        if (keys.s && player.y < canvas.height - player.height) player.y += speed;
+        if (keys.a && player.x > 0) player.x -= speed;
+        if (keys.d && player.x < canvas.width - player.width) player.x += speed;
       }
 
       function drawPlayer() {
-        ctx.fillStyle = player.color;
+        ctx.fillStyle = isSpeedBoostActive ? "yellow" : player.color;
         ctx.fillRect(player.x, player.y, player.width, player.height);
       }
 
       function drawHealthBar() {
-        const barWidth = 200;
-        const barHeight = 20;
-        const healthPercentage = player.health / player.maxHealth;
-        const barFillWidth = barWidth * healthPercentage;
-
+        const barWidth = 200, barHeight = 20, healthPercentage = player.health / player.maxHealth, barFillWidth = barWidth * healthPercentage;
         ctx.fillStyle = "white";
         ctx.font = "16px Arial";
         ctx.fillText("HP", 10, 30);
-
         ctx.fillStyle = "red";
         ctx.fillRect(40, 10, barWidth, barHeight);
-
         ctx.fillStyle = "green";
         ctx.fillRect(40, 10, barFillWidth, barHeight);
       }
@@ -114,40 +69,39 @@
       function spawnEnemies() {
         if (enemies.length === 0) {
           for (let i = 0; i < enemiesToSpawn; i++) {
-            let x = Math.random() * canvas.width;
-            let y = Math.random() * canvas.height;
-
-            while (
-              Math.abs(x - player.x) < 100 &&
-              Math.abs(y - player.y) < 100
-            ) {
-              x = Math.random() * canvas.width;
-              y = Math.random() * canvas.height;
-            }
-
-            enemies.push({ x, y, width: 30, height: 30, health: 2 });
+            let x = Math.random() * canvas.width, y = Math.random() * canvas.height;
+            while (Math.abs(x - player.x) < 100 && Math.abs(y - player.y) < 100) { x = Math.random() * canvas.width; y = Math.random() * canvas.height; }
+            let type;
+            if (wave < 3) type = Math.random() < 0.5 ? "normal" : "ranged";
+            else type = Math.random() < 0.2 ? "ranged" : Math.random() < 0.4 ? "normal" : Math.random() < 0.6 ? "tank" : "fast";
+            enemies.push({ x, y, width: 30, height: 30, health: type === "tank" ? 12 : type === "fast" ? 4 : type === "ranged" ? 2 : 1, type, lastShot: 0 });
           }
         }
       }
 
       function updateEnemies() {
         enemies.forEach((enemy, index) => {
-          const dx = player.x - enemy.x;
-          const dy = player.y - enemy.y;
+          const dx = player.x - enemy.x, dy = player.y - enemy.y, distance = Math.sqrt(dx * dx + dy * dy);
           const angle = Math.atan2(dy, dx);
-          enemy.x += Math.cos(angle) * 2;
-          enemy.y += Math.sin(angle) * 2;
 
-          if (!player.immune && Math.abs(dx) < 20 && Math.abs(dy) < 20) {
-            player.health -= 25;
-            player.immune = true;
-            setTimeout(() => {
-              player.immune = false;
-            }, 500);
+          if (enemy.type === "normal" || enemy.type === "tank" || enemy.type === "fast") {
+            const speed = enemy.type === "tank" ? 1 : enemy.type === "fast" ? 4 : 2;
+            enemy.x += Math.cos(angle) * speed;
+            enemy.y += Math.sin(angle) * speed;
 
-            if (player.health <= 0) {
-              gameOver = true;
-              document.getElementById("gameOver").style.display = "block";
+            if (!player.immune && Math.abs(dx) < 20 && Math.abs(dy) < 20) {
+              player.health -= enemy.type === "tank" ? 40 : enemy.type === "fast" ? 10 : 25;
+              player.immune = true;
+              setTimeout(() => (player.immune = false), 500);
+              if (player.health <= 0) { gameOver = true; document.getElementById("gameOver").style.display = "block"; }
+            }
+          } else if (enemy.type === "ranged") {
+            if (distance < 200) { enemy.x -= Math.cos(angle) * 2; enemy.y -= Math.sin(angle) * 2; }
+            else { enemy.x += Math.cos(angle) * 1; enemy.y += Math.sin(angle) * 1; }
+
+            if (Date.now() - enemy.lastShot > 3000) {
+              enemyBullets.push({ x: enemy.x + enemy.width / 2, y: enemy.y + enemy.height / 2, width: 10, height: 10, speed: 5, dx: Math.cos(angle) * 5, dy: Math.sin(angle) * 5 });
+              enemy.lastShot = Date.now();
             }
           }
         });
@@ -157,134 +111,151 @@
 
       function drawEnemies() {
         enemies.forEach((enemy) => {
-          ctx.fillStyle = "red";
+          ctx.fillStyle = enemy.type === "normal" ? "red" : enemy.type === "ranged" ? "orange" : enemy.type === "tank" ? "purple" : "cyan";
           ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
         });
       }
 
-      function shootBullet() {
-        if (!canShoot) return;
-        canShoot = false;
-
-        const angle = Math.atan2(
-          cursor.y - (player.y + player.height / 2),
-          cursor.x - (player.x + player.width / 2)
-        );
-        bullets.push({
-          x: player.x + player.width / 2,
-          y: player.y + player.height / 2,
-          width: 10,
-          height: 10,
-          speed: 7,
-          dx: Math.cos(angle) * 7,
-          dy: Math.sin(angle) * 7,
-          piercing: false,
+      function updateEnemyBullets() {
+        enemyBullets.forEach((bullet, index) => {
+          bullet.x += bullet.dx; bullet.y += bullet.dy;
+          if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) enemyBullets.splice(index, 1);
+          if (bullet.x < player.x + player.width && bullet.x + bullet.width > player.x && bullet.y < player.y + player.height && bullet.y + bullet.height > player.y) {
+            if (!player.immune && !isParrying) { player.health -= 25; player.immune = true; setTimeout(() => (player.immune = false), 500); if (player.health <= 0) { gameOver = true; document.getElementById("gameOver").style.display = "block"; } }
+            else if (isParrying && !parryCooldown) {
+              const angle = Math.atan2(smoothCursor.y - bullet.y, smoothCursor.x - bullet.x);
+              parriedBullets.push({ x: bullet.x, y: bullet.y, width: 10, height: 10, speed: 10, dx: Math.cos(angle) * 10, dy: Math.sin(angle) * 10, damage: 4 });
+              enemyBullets.splice(index, 1);
+              document.getElementById("parryIndicator").style.display = "block";
+              setTimeout(() => document.getElementById("parryIndicator").style.display = "none", 500);
+              parryCooldown = true;
+              setTimeout(() => parryCooldown = false, 2000); // 2-second parry cooldown
+            }
+          }
         });
+      }
 
-        setTimeout(() => {
-          canShoot = true;
-        }, 500);
+      function drawEnemyBullets() {
+        enemyBullets.forEach((bullet) => { ctx.fillStyle = "yellow"; ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height); });
+      }
+
+      function updateParriedBullets() {
+        parriedBullets.forEach((bullet, index) => {
+          bullet.x += bullet.dx; bullet.y += bullet.dy;
+          if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) parriedBullets.splice(index, 1);
+          enemies.forEach((enemy, eIndex) => {
+            if (bullet.x < enemy.x + enemy.width && bullet.x + bullet.width > enemy.x && bullet.y < enemy.y + enemy.height && bullet.y + bullet.height > enemy.y) {
+              enemies.forEach((e) => {
+                const dist = Math.sqrt((e.x - enemy.x) ** 2 + (e.y - enemy.y) ** 2);
+                if (dist < 50) e.health -= bullet.damage;
+              });
+              parriedBullets.splice(index, 1);
+            }
+          });
+        });
+      }
+
+      function drawParriedBullets() {
+        parriedBullets.forEach((bullet) => { ctx.fillStyle = "lime"; ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height); });
+      }
+
+      function shootBullet() {
+        const weapon = weaponCooldowns[currentWeapon];
+        if (!weapon.canShoot) return;
+        weapon.canShoot = false; weapon.lastShot = Date.now();
+        const angle = Math.atan2(smoothCursor.y - (player.y + player.height / 2), smoothCursor.x - (player.x + player.width / 2));
+
+        if (currentWeapon === "primary") {
+          bullets.push({ x: player.x + player.width / 2, y: player.y + player.height / 2, width: 10, height: 10, speed: 15, dx: Math.cos(angle) * 15, dy: Math.sin(angle) * 15, damage: 1 });
+          setTimeout(() => (weapon.canShoot = true), 1000);
+        } else if (currentWeapon === "shotgun") {
+          for (let i = 0; i < 12; i++) {
+            const spreadAngle = angle + (Math.random() - 0.5) * 0.5;
+            bullets.push({ x: player.x + player.width / 2, y: player.y + player.height / 2, width: 10, height: 10, speed: 10, dx: Math.cos(spreadAngle) * 10, dy: Math.sin(spreadAngle) * 10, damage: 1 });
+          }
+          setTimeout(() => (weapon.canShoot = true), 2000);
+        }
       }
 
       function secondaryAttack() {
         if (secondaryCooldown) return;
         secondaryCooldown = true;
-        cooldownTimer = 10;
-
-        const angle = Math.atan2(
-          cursor.y - (player.y + player.height / 2),
-          cursor.x - (player.x + player.width / 2)
-        );
-        bullets.push({
-          x: player.x + player.width / 2,
-          y: player.y + player.height / 2,
-          width: 20,
-          height: 20,
-          speed: 15,
-          dx: Math.cos(angle) * 15,
-          dy: Math.sin(angle) * 15,
-          piercing: true,
-        });
+        if (currentWeapon === "primary") {
+          isSpeedBoostActive = true;
+          setTimeout(() => (isSpeedBoostActive = false), 5000);
+          cooldownTimer = 10;
+        } else if (currentWeapon === "shotgun") {
+          isShotgunSpecialActive = true;
+          const duration = 1500, interval = 100;
+          let elapsedTime = 0;
+          const attackInterval = setInterval(() => {
+            if (elapsedTime >= duration) { clearInterval(attackInterval); isShotgunSpecialActive = false; cooldownTimer = 15; return; }
+            const angle = Math.atan2(smoothCursor.y - (player.y + player.height / 2), smoothCursor.x - (player.x + player.width / 2));
+            for (let i = 0; i < 5; i++) {
+              const spreadAngle = angle + (Math.random() - 0.5) * 0.5;
+              bullets.push({ x: player.x + player.width / 2, y: player.y + player.height / 2, width: 10, height: 10, speed: 10, dx: Math.cos(spreadAngle) * 10, dy: Math.sin(spreadAngle) * 10, damage: 1 });
+            }
+            elapsedTime += interval;
+          }, interval);
+        }
 
         const timerElement = document.getElementById("cooldownTimer");
         const interval = setInterval(() => {
           cooldownTimer--;
-          if (cooldownTimer > 0) {
-            timerElement.textContent = `Cooldown: ${cooldownTimer}s`;
-          } else {
-            clearInterval(interval);
-            secondaryCooldown = false;
-            timerElement.textContent = "Secondary Attack Ready";
-          }
+          if (cooldownTimer > 0) timerElement.textContent = `Cooldown: ${cooldownTimer}s`;
+          else { clearInterval(interval); secondaryCooldown = false; timerElement.textContent = "Secondary Attack Ready"; }
         }, 1000);
+      }
+
+      function meleeAttack() {
+        if (meleeCooldown) return;
+        meleeCooldown = true;
+        isParrying = true;
+        setTimeout(() => { meleeCooldown = false; isParrying = false; }, 500);
+
+        enemies.forEach((enemy, index) => {
+          const dx = player.x - enemy.x, dy = player.y - enemy.y;
+          if (Math.abs(dx) < 50 && Math.abs(dy) < 50) { enemy.health -= 5; if (enemy.health <= 0) enemies.splice(index, 1); }
+        });
       }
 
       function updateBullets() {
         bullets.forEach((bullet, index) => {
-          bullet.x += bullet.dx;
-          bullet.y += bullet.dy;
-
-          if (
-            bullet.x < 0 ||
-            bullet.x > canvas.width ||
-            bullet.y < 0 ||
-            bullet.y > canvas.height
-          ) {
-            bullets.splice(index, 1);
-          }
-
+          bullet.x += bullet.dx; bullet.y += bullet.dy;
+          if (bullet.x < 0 || bullet.x > canvas.width || bullet.y < 0 || bullet.y > canvas.height) bullets.splice(index, 1);
           enemies.forEach((enemy, eIndex) => {
-            if (
-              bullet.x < enemy.x + enemy.width &&
-              bullet.x + bullet.width > enemy.x &&
-              bullet.y < enemy.y + enemy.height &&
-              bullet.y + bullet.height > enemy.y
-            ) {
-              enemy.health -= bullet.piercing ? 2 : 1;
-
-              if (!bullet.piercing) bullets.splice(index, 1);
-
-              if (enemy.health <= 0) {
-                enemies.splice(eIndex, 1);
-                player.health = Math.min(player.health + 10, player.maxHealth);
-              } else {
-                player.health = Math.min(player.health + 5, player.maxHealth);
-              }
+            if (bullet.x < enemy.x + enemy.width && bullet.x + bullet.width > enemy.x && bullet.y < enemy.y + enemy.height && bullet.y + bullet.height > enemy.y) {
+              enemy.health -= bullet.damage;
+              if (enemy.health <= 0) { enemies.splice(eIndex, 1); player.health = Math.min(player.health + 10, player.maxHealth); }
+              bullets.splice(index, 1);
             }
           });
         });
       }
 
       function drawBullets() {
-        bullets.forEach((bullet) => {
-          ctx.fillStyle = bullet.piercing ? "green" : "darkblue";
-          ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
-        });
+        bullets.forEach((bullet) => { ctx.fillStyle = "darkblue"; ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height); });
       }
 
       function checkWaveCompletion() {
-        if (enemies.length === 0) {
-          wave++;
-          enemiesToSpawn += 2;
-          document.getElementById("waveCounter").textContent = `Wave: ${wave}`;
-          spawnEnemies();
-        }
+        if (enemies.length === 0) { wave++; enemiesToSpawn += 4; document.getElementById("waveCounter").textContent = `Wave: ${wave}`; spawnEnemies(); }
       }
 
       function gameLoop() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
         if (gameOver) return;
-
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         handlePlayerMovement();
         updateEnemies();
         updateBullets();
+        updateEnemyBullets();
+        updateParriedBullets();
         checkWaveCompletion();
         drawPlayer();
         drawHealthBar();
         drawEnemies();
         drawBullets();
-
+        drawEnemyBullets();
+        drawParriedBullets();
         requestAnimationFrame(gameLoop);
       }
 
@@ -294,6 +265,9 @@
         if (e.key === "s") keys.s = true;
         if (e.key === "d") keys.d = true;
         if (e.key === " ") secondaryAttack();
+        if (e.key === "f") meleeAttack();
+        if (e.key === "1") { currentWeapon = "primary"; document.getElementById("weaponStatus").textContent = "Weapon: Pistol"; }
+        if (e.key === "2") { currentWeapon = "shotgun"; document.getElementById("weaponStatus").textContent = "Weapon: Shotgun"; }
       });
 
       window.addEventListener("keyup", (e) => {
@@ -304,11 +278,10 @@
       });
 
       canvas.addEventListener("mousedown", shootBullet);
-
       canvas.addEventListener("mousemove", (e) => {
         const rect = canvas.getBoundingClientRect();
-        cursor.x = e.clientX - rect.left;
-        cursor.y = e.clientY - rect.top;
+        cursor.x = e.clientX - rect.left; cursor.y = e.clientY - rect.top;
+        smoothCursor.x += (cursor.x - smoothCursor.x) * smoothFactor; smoothCursor.y += (cursor.y - smoothCursor.y) * smoothFactor;
       });
 
       spawnEnemies();
